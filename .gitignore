@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# Local dev database
+local_dev.db
+
+# Generated agent outputs (plots and reports)
+shared/
+
+# Environment
+.env
+
+# Docker volumes
+postgres_data/
+redis_data/
