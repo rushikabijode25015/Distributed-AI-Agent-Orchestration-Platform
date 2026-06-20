@@ -1,0 +1,103 @@
+services:
+  # 1. PostgreSQL Database with pgvector
+  - type: database
+    name: agent-postgres-db
+    databaseName: agent_orchestrator
+    user: postgres
+    plan: free
+
+  # 2. Redis broker/cache
+  - type: redis
+    name: agent-redis-broker
+    plan: free
+    ipAllowList: [] # Only allow internal network connections
+
+  # 3. FastAPI API Gateway
+  - type: web
+    name: agent-api-gateway
+    env: docker
+    plan: free
+    dockerfilePath: Dockerfile
+    dockerContext: .
+    buildCommand: "" # Automatically built via Dockerfile
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: POSTGRES_HOST
+        fromDatabase:
+          name: agent-postgres-db
+          property: host
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: agent-postgres-db
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: agent-postgres-db
+          property: password
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: agent-postgres-db
+          property: database
+      - key: REDIS_HOST
+        fromRedis:
+          name: agent-redis-broker
+          property: host
+      - key: REDIS_PORT
+        fromRedis:
+          name: agent-redis-broker
+          property: port
+      - key: CELERY_BROKER_URL
+        value: redis://redis-broker:6379/0 # Override in dashboard with internal redis url
+      - key: CELERY_RESULT_BACKEND
+        value: redis://redis-broker:6379/0
+      - key: GEMINI_API_KEY
+        sync: false # Set manually in Render dashboard
+      - key: OPENAI_API_KEY
+        sync: false
+
+  # 4. Celery Distributed Agent Workers
+  - type: worker
+    name: agent-worker-pool
+    env: docker
+    plan: free
+    dockerfilePath: Dockerfile
+    dockerContext: .
+    buildCommand: ""
+    startCommand: celery -A app.worker.celery_app worker --loglevel=info --concurrency=2
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: POSTGRES_HOST
+        fromDatabase:
+          name: agent-postgres-db
+          property: host
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: agent-postgres-db
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: agent-postgres-db
+          property: password
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: agent-postgres-db
+          property: database
+      - key: REDIS_HOST
+        fromRedis:
+          name: agent-redis-broker
+          property: host
+      - key: REDIS_PORT
+        fromRedis:
+          name: agent-redis-broker
+          property: port
+      - key: CELERY_BROKER_URL
+        value: redis://redis-broker:6379/0 # Override in dashboard with internal redis url
+      - key: CELERY_RESULT_BACKEND
+        value: redis://redis-broker:6379/0
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
