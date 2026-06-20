@@ -1,3 +1,4 @@
+import json
 import hashlib
 import numpy as np
 from sqlalchemy.orm import Session
@@ -76,33 +77,64 @@ def retrieve_memories(db: Session, project_id: str, query_text: str, limit: int 
     Generates embedding for query_text and finds the top `limit` most semantically
     similar memories associated with project_id.
     Returns list of tuples: (Memory object, cosine_similarity).
+
+    Uses pgvector's cosine_distance operator when available (PostgreSQL).
+    Falls back to pure-Python numpy cosine similarity ranking for SQLite/local dev.
     """
     query_embedding = get_embedding(query_text)
-    
-    # pgvector provides .cosine_distance(vector)
-    # Cosine distance = 1 - cosine_similarity.
-    # Therefore: Cosine similarity = 1 - cosine_distance.
-    # We sort by cosine_distance ascending.
-    results = (
-        db.query(Memory)
-        .filter(Memory.project_id == project_id)
-        .order_by(Memory.embedding.cosine_distance(query_embedding))
-        .limit(limit)
-        .all()
-    )
-    
+    query_vec = np.array(query_embedding)
+    query_norm = np.linalg.norm(query_vec)
+
+    # --- Try pgvector native ordering first ---
+    try:
+        results = (
+            db.query(Memory)
+            .filter(Memory.project_id == project_id)
+            .order_by(Memory.embedding.cosine_distance(query_embedding))
+            .limit(limit)
+            .all()
+        )
+    except Exception:
+        # pgvector not available (e.g. SQLite local dev mode):
+        # fetch all memories and rank in Python
+        all_mems = (
+            db.query(Memory)
+            .filter(Memory.project_id == project_id)
+            .all()
+        )
+        if not all_mems:
+            return []
+
+        scored = []
+        for mem in all_mems:
+            try:
+                a = np.array(mem.embedding if isinstance(mem.embedding, list)
+                             else json.loads(mem.embedding))
+                norm_a = np.linalg.norm(a)
+                if norm_a > 0 and query_norm > 0:
+                    sim = float(np.dot(a, query_vec) / (norm_a * query_norm))
+                else:
+                    sim = 0.0
+            except Exception:
+                sim = 0.0
+            scored.append((mem, sim))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:limit]
+
+    # Compute similarity scores for pgvector results
     memories_with_scores = []
     for mem in results:
-        # Calculate similarity score: 1 - cosine_distance
-        # Using numpy to calculate cosine similarity since we have the arrays
-        a = np.array(mem.embedding)
-        b = np.array(query_embedding)
-        norm_a = np.linalg.norm(a)
-        norm_b = np.linalg.norm(b)
-        if norm_a > 0 and norm_b > 0:
-            sim = float(np.dot(a, b) / (norm_a * norm_b))
-        else:
+        try:
+            a = np.array(mem.embedding if isinstance(mem.embedding, list)
+                         else json.loads(mem.embedding))
+            norm_a = np.linalg.norm(a)
+            if norm_a > 0 and query_norm > 0:
+                sim = float(np.dot(a, query_vec) / (norm_a * query_norm))
+            else:
+                sim = 0.0
+        except Exception:
             sim = 0.0
         memories_with_scores.append((mem, sim))
-        
+
     return memories_with_scores
